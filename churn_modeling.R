@@ -1,16 +1,11 @@
 library(lubridate)
 library(dplyr)
 library(ade4)
-library(mlr)
 
 ####################--Params--###########################################
 
 subs_tenure_cutoff = 30
 inactive_period_cutoff = 7 # filter out customer who has not been active since last 30 days 
-
-#########################################################################
-
-setwd("/Users/Ravi/Desktop/Dream11 Data Science assignment")
 
 ####################--Data Load--########################################
 
@@ -44,8 +39,15 @@ cust_trans_hist_dist <- transaction_history %>%
             gap_above_90_count = sum(ifelse(diff(date(transaction_date))>=90,1,0))) %>% 
   mutate(subs_tenure = as.numeric(date(max_trans_date) - date(min_trans_date)))
 
+#extract game played data ifno
+
+game_played_data <- rounds_info %>%
+  group_by(Game_played) %>%
+  summarise(game_name = unique(Game_name))
+
 # data prep 
 cust_churn_data <- transaction_history %>%
+  left_join(game_played_data, by = "Game_played") %>%
   group_by(User_id) %>%
   mutate(date_diff = as.numeric(c(0,diff(date(transaction_date))))) %>%
   arrange(User_id,transaction_date) %>%
@@ -100,7 +102,8 @@ churn_class_data <- cust_churn_data %>%
     trans_other_amount = sum(trans_amount[which(trans_cat_other == 1)]),
     anonymous_var2_sum = sum(anonymous_var2)) %>%
   left_join(registration, by = "User_id") %>%
-  left_join(cust_surv_data[,c("User_id", "surv_age")], by = "User_id")
+  left_join(cust_surv_data[,c("User_id", "surv_age")], by = "User_id") %>%
+  left_join(model_cust_list[,c("User_id", "churn")], by = "User_id")
 
 
 
