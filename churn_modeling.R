@@ -102,9 +102,7 @@ churn_class_data <- cust_churn_data %>%
   left_join(registration, by = "User_id") %>%
   left_join(cust_surv_data[,c("User_id", "surv_age")], by = "User_id")
 
-#add
 
-new <- "a"
 
 
 
