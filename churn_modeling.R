@@ -1,6 +1,9 @@
 library(lubridate)
+# library(plyr)
 library(dplyr)
-library(ade4)
+# library(ade4)
+# library(tidyr)
+library(caret)
 
 ####################--Params--###########################################
 
@@ -14,7 +17,9 @@ transaction_history <- read.csv("transaction_history.csv")
 rounds_info <- read.csv("rounds_info.csv")
 
 registration <- registration %>%
-  mutate(MobileVerified = as.factor(MobileVerified), EmailVerified = as.factor(EmailVerified))
+  mutate(MobileVerified = as.factor(MobileVerified), EmailVerified = as.factor(EmailVerified)) %>%
+  mutate(MobileVerified = recode(MobileVerified, "1" = "yes", "0" = "no")) %>%
+  mutate(EmailVerified = recode(EmailVerified, "1" = "yes", "0" = "no"))
 
 transaction_history <- transaction_history %>%
   mutate(transaction_date = ymd_hms(transaction_date))
@@ -43,7 +48,7 @@ cust_trans_hist_dist <- transaction_history %>%
 
 game_played_data <- rounds_info %>%
   group_by(Game_played) %>%
-  summarise(game_name = unique(Game_name))
+  summarise(game_name = unique(as.character(Game_name)))
 
 # data prep 
 cust_churn_data <- transaction_history %>%
@@ -85,13 +90,18 @@ churn_class_data <- cust_churn_data %>%
   group_by(User_id) %>%
   summarise(
     # subs_tenure = as.numeric(date(max(transaction_date)) - date(min(transaction_date))),
-    median_gap = max(as.numeric(median(diff(date(transaction_date)))),0),
+    median_gap = (as.numeric(ifelse(length(transaction_date) >2,as.numeric(median(diff(date(transaction_date)))), 
+                                    as.numeric(max(date(transaction_date)) - min(date(transaction_date)))))),
     tot_trans_amount = sum(trans_amount),
     trans_count = length(trans_amount),
     avg_balance = mean(balance),
     curr_balance = balance[length(balance)],
     tot_game_played = length(unique(Game_played)),
     tot_league_played = length(unique(League_played)),
+    cricket_match_count = length(game_name[which(game_name == "cricket")]),
+    football_match_count = length(game_name[which(game_name == "football")]),
+    kabaddi_match_count = length(game_name[which(game_name == "Kabaddi")]),
+    rugby_match_count = length(game_name[which(game_name == "rugby")]),
     trans_deposit_count = sum(trans_cat_deposit),
     trans_join_count = sum(trans_cat_join),
     trans_withdraw_count = sum(trans_cat_withdraw),
@@ -103,7 +113,42 @@ churn_class_data <- cust_churn_data %>%
     anonymous_var2_sum = sum(anonymous_var2)) %>%
   left_join(registration, by = "User_id") %>%
   left_join(cust_surv_data[,c("User_id", "surv_age")], by = "User_id") %>%
-  left_join(model_cust_list[,c("User_id", "churn")], by = "User_id")
+  left_join(model_cust_list[,c("User_id", "churn")], by = "User_id") %>%
+  mutate(churn = recode(churn, "1" = "yes", "0" = "no"))
+
+########### Model building ################################################
+
+model_input <- churn_class_data
+model_input$User_id <- NULL
+
+intrain <- createDataPartition(model_input$churn,p = 0.8,list = FALSE)
+train <- model_input[intrain,]
+test <- model_input[-intrain,]
+
+# trainSplit <- SMOTE(Default_Flag ~ ., train, perc.over = 100, perc.under=300)
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 10,
+                           repeats = 10,
+                           ## Estimate class probabilities
+                           classProbs = TRUE,
+                           ## Evaluate performance using 
+                           ## the following function
+                           summaryFunction = twoClassSummary)
+gbmGrid <-  expand.grid(interaction.depth = c(3, 6),
+                        n.trees = (5:30)*10, 
+                        shrinkage = c(.1),
+                        n.minobsinnode = 10)
+model_gbm <- train(churn ~ ., data = train, 
+                   method = "gbm", 
+                   trControl = fitControl,
+                   bag.fraction = 0.6,
+                   verbose = FALSE,
+                   tuneGrid = gbmGrid,
+                   metric = "ROC")
+
+
+
+
 
 
 
