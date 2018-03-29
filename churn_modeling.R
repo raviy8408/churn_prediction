@@ -1,23 +1,24 @@
+if("package:plyr" %in% search()) detach("package:plyr", unload=TRUE)
 library(lubridate)
-# library(plyr)
 library(dplyr)
-# library(ade4)
-# library(tidyr)
 library(caret)
+library(ggplot2)
+library(plotROC)
 
-####################--Params--###########################################
+#####################################--Params--###############################################
 
-subs_tenure_cutoff = 30
-inactive_period_cutoff = 7 # filter out customer who has not been active since last 30 days 
+subs_tenure_cutoff = 30 # filter out customer who has subscription tenure less than 30 days
+inactive_period_cutoff = 7 # filter out custmr who has been inactive for more than last 7 days 
 
-####################--Data Load--########################################
+#####################################--Data Load--############################################
 
 registration <- read.csv("registration.csv")
 transaction_history <- read.csv("transaction_history.csv")
 rounds_info <- read.csv("rounds_info.csv")
 
 registration <- registration %>%
-  mutate(MobileVerified = as.factor(MobileVerified), EmailVerified = as.factor(EmailVerified)) %>%
+  mutate(MobileVerified = as.factor(MobileVerified), 
+         EmailVerified = as.factor(EmailVerified)) %>%
   mutate(MobileVerified = recode(MobileVerified, "1" = "yes", "0" = "no")) %>%
   mutate(EmailVerified = recode(EmailVerified, "1" = "yes", "0" = "no"))
 
@@ -29,23 +30,30 @@ rounds_info <- rounds_info %>%
 
 current_date = max(transaction_history$transaction_date)
 
-#########################################################################
+#####################################--EDA and Data Prep--###################################
 
-#####################--EDA and Data Prep--###############################
-
+# explore customer transaction history
 cust_trans_hist_dist <- transaction_history %>%
   group_by(User_id) %>%
   summarise(min_trans_date = min(transaction_date), max_trans_date = max(transaction_date), 
             max_gap_retured = max(as.numeric(max(diff(date(transaction_date)))),0),
-            median_gap_retured = max(as.numeric(median(diff(date(transaction_date)))),0),
+            median_gap_retured = as.numeric(ifelse(
+              length(transaction_date) > 2,
+              as.numeric(median(diff(
+                date(transaction_date)
+              ))),
+              as.numeric(max(date(transaction_date)) -
+                           min(date(transaction_date)))
+            )), 
             last_active_before = as.numeric(date(current_date)-max(date(transaction_date))),
-            max_gap_till_current_date = max(max(as.numeric(max(diff(date(transaction_date)))),0),
-                                            (as.numeric(date(current_date)-max(date(transaction_date))))), 
+            max_gap_till_current_date = 
+              max(max(as.numeric(max(diff(date(transaction_date)))),0),
+                                            (as.numeric(date(current_date)-
+                                                          max(date(transaction_date))))), 
             gap_above_90_count = sum(ifelse(diff(date(transaction_date))>=90,1,0))) %>% 
   mutate(subs_tenure = as.numeric(date(max_trans_date) - date(min_trans_date)))
 
 #extract game played data ifno
-
 game_played_data <- rounds_info %>%
   group_by(Game_played) %>%
   summarise(game_name = unique(as.character(Game_name)))
@@ -71,7 +79,8 @@ last_trans_date <- cust_churn_data %>%
 
 cust_surv_data <- cust_trans_hist_dist %>%
   left_join(last_trans_date, by = "User_id") %>%
-  mutate(last_active_date = ifelse(is.na(last_trans_dt), as.character(date(as.character(current_date))), 
+  mutate(last_active_date = ifelse(is.na(last_trans_dt), 
+                                   as.character(date(as.character(current_date))), 
                                    as.character(last_trans_dt))) %>%
   mutate(surv_age = ifelse(max_gap_till_current_date >= 90, 
                            as.numeric(date(last_trans_dt) - date(min_trans_date)), 
@@ -81,7 +90,8 @@ cust_surv_data <- cust_trans_hist_dist %>%
 model_cust_list <- cust_trans_hist_dist %>%
   filter(subs_tenure >= subs_tenure_cutoff) %>%
   filter(max_gap_till_current_date >= 90 | 
-           (max_gap_till_current_date < 90 & last_active_before <inactive_period_cutoff)) %>%
+           (max_gap_till_current_date < 90 & 
+              last_active_before <inactive_period_cutoff)) %>%
   mutate(churn = as.factor(ifelse(max_gap_till_current_date >=90,"1","0")))
 
 # final input data to the model 
@@ -89,9 +99,10 @@ churn_class_data <- cust_churn_data %>%
   filter(User_id %in% model_cust_list$User_id) %>%
   group_by(User_id) %>%
   summarise(
-    # subs_tenure = as.numeric(date(max(transaction_date)) - date(min(transaction_date))),
-    median_gap = (as.numeric(ifelse(length(transaction_date) >2,as.numeric(median(diff(date(transaction_date)))), 
-                                    as.numeric(max(date(transaction_date)) - min(date(transaction_date)))))),
+    median_gap = as.numeric(ifelse(length(transaction_date) >2,
+                                    as.numeric(median(diff(date(transaction_date)))), 
+                                    as.numeric(max(date(transaction_date)) - 
+                                                 min(date(transaction_date))))),
     tot_trans_amount = sum(trans_amount),
     trans_count = length(trans_amount),
     avg_balance = mean(balance),
@@ -116,7 +127,7 @@ churn_class_data <- cust_churn_data %>%
   left_join(model_cust_list[,c("User_id", "churn")], by = "User_id") %>%
   mutate(churn = recode(churn, "1" = "yes", "0" = "no"))
 
-########### Model building ################################################
+################################--Model building--###########################################
 
 model_input <- churn_class_data
 model_input$User_id <- NULL
@@ -125,7 +136,7 @@ intrain <- createDataPartition(model_input$churn,p = 0.8,list = FALSE)
 train <- model_input[intrain,]
 test <- model_input[-intrain,]
 
-# trainSplit <- SMOTE(Default_Flag ~ ., train, perc.over = 100, perc.under=300)
+# trainSplit <- SMOTE(churn ~ ., train, perc.over = 100, perc.under=300)
 fitControl <- trainControl(method = "repeatedcv",
                            number = 10,
                            repeats = 10,
@@ -145,6 +156,47 @@ model_gbm <- train(churn ~ ., data = train,
                    verbose = FALSE,
                    tuneGrid = gbmGrid,
                    metric = "ROC")
+
+plot(model_gbm)
+print(varImp(model_gbm))
+
+##################################--model performance --#####################################
+
+pred_test_class <- predict(model_gbm,test[,-length(test)])
+pred_train_class <- predict(model_gbm,train[,-length(train)])
+
+pred_test_prob <- predict(model_gbm,test[,-length(test)], type = "prob")
+pred_train_prob <- predict(model_gbm,train[,-length(train)], type = "prob")
+
+result_train <- data.frame(pred = pred_train_class, churn_actual = as.array(train$churn), 
+                           pred_prob = pred_train_prob$yes)
+result_test <- data.frame(pred = pred_test_class, churn_actual = as.array(test$churn),
+                          pred_prob = pred_test_prob$yes)
+
+train_cnf <- confusionMatrix(table(result_train$pred, result_train$churn_actual))
+test_cnf <- confusionMatrix(table(result_test$pred, result_test$churn))
+
+print(train_cnf)
+print(test_cnf)
+
+roc_test_baseplot <- ggplot(result_test, aes(d = churn_actual, m = pred_prob)) + geom_roc() 
+roc_test_plot <- roc_test_baseplot + style_roc() +
+  annotate("text",
+           x = .75,
+           y = .25,
+           label = paste("AUC =", round(calc_auc(roc_test_baseplot)$AUC, 2)))
+
+roc_test_plot
+
+##############################################################################################
+
+
+
+
+
+
+
+
 
 
 
