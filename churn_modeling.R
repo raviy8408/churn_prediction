@@ -136,14 +136,10 @@ intrain <- createDataPartition(model_input$churn,p = 0.8,list = FALSE)
 train <- model_input[intrain,]
 test <- model_input[-intrain,]
 
-# trainSplit <- SMOTE(churn ~ ., train, perc.over = 100, perc.under=300)
 fitControl <- trainControl(method = "repeatedcv",
                            number = 10,
                            repeats = 10,
-                           ## Estimate class probabilities
                            classProbs = TRUE,
-                           ## Evaluate performance using 
-                           ## the following function
                            summaryFunction = twoClassSummary)
 gbmGrid <-  expand.grid(interaction.depth = c(3, 6),
                         n.trees = (5:30)*10, 
